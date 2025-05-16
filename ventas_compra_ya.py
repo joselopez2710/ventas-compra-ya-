@@ -1,82 +1,111 @@
-
-import streamlit as st 
+import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime, date
 import os
 
 st.set_page_config(page_title="Ventas Compra Ya", layout="wide")
 st.title("🛍️ VENTAS COMPRA YA")
 
-DATA_FILE = "ventas_guardadas.csv"
+# Archivos CSV
+DATA_FILE = "ventas_data.csv"
 CALENDAR_FILE = "calendario_mensual.csv"
 
-# Definir horarios de 6AM a 11PM
+# Horarios y vendedores
 horas = [f"{h:02}:00" for h in range(6, 24)]
 vendedores = ["Britany", "Victor", "Jeniffer"]
 
-# Cargar datos previos si existen
+# Cargar datos
 def cargar_datos():
     if os.path.exists(DATA_FILE):
         return pd.read_csv(DATA_FILE, index_col=0)
     else:
-        return pd.DataFrame(0, index=horas, columns=vendedores)
+        df = pd.DataFrame(0, index=horas, columns=vendedores)
+        return df
+
+def guardar_datos(df):
+    df.to_csv(DATA_FILE)
 
 def cargar_calendario():
     if os.path.exists(CALENDAR_FILE):
-        cal = pd.read_csv(CALENDAR_FILE, index_col=0)
-        cal.index = pd.to_datetime(cal.index).date
-        return cal
+        return pd.read_csv(CALENDAR_FILE, index_col=0, parse_dates=True)
     else:
         hoy = date.today()
         dias_mes = pd.date_range(hoy.replace(day=1), periods=31, freq="D")
         dias_mes = dias_mes[dias_mes.month == hoy.month]
-        return pd.DataFrame(0, index=[d.date() for d in dias_mes], columns=["Ventas Totales"])
+        calendario = pd.DataFrame(index=[d.date() for d in dias_mes], columns=["Ventas Totales"])
+        calendario["Ventas Totales"] = 0
+        return calendario
 
-st.session_state.ventas = cargar_datos()
-st.session_state.calendario = cargar_calendario()
+def guardar_calendario(df):
+    df.to_csv(CALENDAR_FILE)
 
-# Botón para resetear ventas del día
-if st.button("🔁 Resetear ventas del día"):
-    st.session_state.ventas.loc[:, :] = 0
-    st.success("Ventas diarias restablecidas.")
+ventas = cargar_datos()
+calendario = cargar_calendario()
 
+# Ingreso de ventas por hora
 st.subheader("🕒 Ingresar Ventas por Hora")
 for hora in horas:
     cols = st.columns(len(vendedores) + 1)
     cols[0].markdown(f"**{hora}**")
     for i, vendedor in enumerate(vendedores):
-        value = cols[i + 1].number_input(f"{hora} - {vendedor}", min_value=0, step=1, value=int(st.session_state.ventas.loc[hora, vendedor]), key=f"{hora}_{vendedor}")
-        st.session_state.ventas.loc[hora, vendedor] = value
+        value = cols[i + 1].number_input(f"{hora} - {vendedor}", min_value=0, step=1, key=f"{hora}_{vendedor}", value=int(ventas.loc[hora, vendedor]))
+        ventas.loc[hora, vendedor] = value
 
-# Total por hora y total del día
-st.subheader("📊 Totales")
-ventas = st.session_state.ventas.copy()
+# Totales
+st.subheader("📊 Totales por Hora y Totales del Día")
 ventas["Total Hora"] = ventas.sum(axis=1)
 total_dia = ventas["Total Hora"].sum()
-
 st.dataframe(ventas.style.format(precision=0))
 st.markdown(f"### 🔢 Total de Ventas del Día: **{int(total_dia)}**")
 
-# Guardar los datos actualizados
-st.session_state.ventas.to_csv(DATA_FILE)
+# Botón de guardar
+if st.button("💾 Guardar ventas de hoy"):
+    hoy = date.today()
+    calendario.loc[hoy, "Ventas Totales"] = int(total_dia)
+    guardar_calendario(calendario)
+    guardar_datos(ventas)
+    st.success("✅ Ventas guardadas correctamente.")
 
-# Calendario mensual
+# Botón de reset
+if st.button("🔁 Resetear ventas del día"):
+    ventas.iloc[:, :-1] = 0
+    guardar_datos(ventas)
+    st.experimental_rerun()
+
+# Calendario editable
 st.subheader("📅 Registro Diario de Ventas - Calendario del Mes")
-hoy = date.today()
+fecha_edit = st.date_input("Selecciona el día para editar:", date.today())
+nuevo_valor = st.number_input("Nuevo valor de ventas:", min_value=0, step=1)
+if st.button("Actualizar día seleccionado"):
+    calendario.loc[fecha_edit, "Ventas Totales"] = nuevo_valor
+    guardar_calendario(calendario)
+    st.success(f"✅ Actualizado {fecha_edit} con Q{nuevo_valor}")
 
-# Registro diario editable
-if st.button("Guardar ventas de hoy"):
-    st.session_state.calendario.loc[hoy, "Ventas Totales"] = int(total_dia)
-    st.session_state.calendario.to_csv(CALENDAR_FILE)
-    st.success("Ventas del día guardadas en el calendario.")
+st.dataframe(calendario)
 
-# Permitir edición manual del calendario
-st.markdown("#### ✏️ Editar valores del calendario")
-for i, row in st.session_state.calendario.iterrows():
-    nuevo_valor = st.number_input(f"{i}", value=int(row["Ventas Totales"]), key=f"edit_{i}")
-    st.session_state.calendario.loc[i, "Ventas Totales"] = nuevo_valor
+# Total acumulado
+st.markdown(f"### 📈 Total Acumulado del Mes: **{int(calendario['Ventas Totales'].sum())}**")
 
-st.session_state.calendario.to_csv(CALENDAR_FILE)
-st.dataframe(st.session_state.calendario)
+# Gráfico de barras diario
+st.subheader("📊 Gráfico Diario de Ventas por Vendedor")
+fig1, ax1 = plt.subplots()
+ventas[vendedores].sum().plot(kind="bar", ax=ax1, color=["#1f77b4", "#ff7f0e", "#2ca02c"])
+ax1.set_ylabel("Ventas del Día")
+st.pyplot(fig1)
 
-st.markdown(f"### 📈 Total Acumulado del Mes: **{st.session_state.calendario['Ventas Totales'].sum()}**")
+# Gráfico de barras mensual
+st.subheader("📅 Gráfico Mensual Acumulado")
+mensual_vendedores = {v: 0 for v in vendedores}
+for dia in calendario.index:
+    if isinstance(dia, str):
+        dia = pd.to_datetime(dia).date()
+    for v in vendedores:
+        if os.path.exists(DATA_FILE):
+            df_tmp = pd.read_csv(DATA_FILE, index_col=0)
+            mensual_vendedores[v] += df_tmp[v].sum()
+
+fig2, ax2 = plt.subplots()
+pd.Series(mensual_vendedores).plot(kind="bar", ax=ax2, color=["#1f77b4", "#ff7f0e", "#2ca02c"])
+ax2.set_ylabel("Ventas del Mes")
+st.pyplot(fig2)
